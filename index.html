@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Battleship — Submarine Storm</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111a2c; --ink:#e8f0ff; --muted:#a9b9d6; --accent:#58b0ff; --enemy:#ff8e6e; --good:#67e8a5; --miss:#2a3550; --hit:#ff5d5d; --warn:#ffd166; --blocked:#1a2238; --cell:min(38px, max(26px, calc((100vw - 80px - 9*4px)/10)));
+  }
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto}
+  .wrap{max-width:1180px;margin:0 auto;padding:16px;display:grid;gap:16px}
+  .heroTitle{font-size:32px;letter-spacing:.3px;margin:8px 0;background:linear-gradient(90deg,#cfe1ff,#6fb3ff,#cfe1ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  @media (min-width:900px){.heroTitle{font-size:38px}}
+  .heroSub{font-size:16px;color:#cfe1ff;opacity:.95}
+  .stormBadge{display:inline-block;margin-left:8px;padding:4px 10px;border-radius:999px;border:1px solid #2a4470;background:#0f1f3a;color:#9cd1ff;font-weight:800;transition:all .3s ease}
+  .stormBadge.pulse{animation:pulse 1.5s ease-in-out infinite}
+  .stormBadge.flash{animation:flash 1.5s ease}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(88,176,255,.6)}70%{box-shadow:0 0 0 10px rgba(88,176,255,0)}100%{box-shadow:0 0 0 0 rgba(88,176,255,0)}}
+  @keyframes flash{0%{filter:brightness(1)}20%{filter:brightness(2)}100%{filter:brightness(1)}}
+  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .card{background:var(--panel);border:1px solid #1c2a45;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.35);padding:14px;flex:1;min-width:280px}
+  .hud{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin:6px 0 10px}
+  .pill{border:1px solid #203357;background:#0e1627;color:var(--muted);padding:6px 10px;border-radius:999px;font-size:13px}
+  .btn{cursor:pointer;border:1px solid #2a4470;background:#132443;color:#dff2ff;padding:10px 14px;border-radius:10px;font-weight:600}
+  .btn:hover{filter:brightness(1.06)}
+  .layout{display:grid;grid-template-columns: 1fr 300px; gap:16px}
+  @media (max-width: 980px){.layout{grid-template-columns:1fr}}
+  .grids{display:grid;grid-template-columns: repeat(2, minmax(280px,1fr));gap:16px; transition: box-shadow .25s ease}
+  .grids.storm-glow{box-shadow:0 0 30px 8px #73d7ff}
+  .grid{display:grid;grid-template-columns:repeat(10,var(--cell));grid-auto-rows:var(--cell);gap:4px;user-select:none}
+  .cell{display:grid;place-items:center;border:1px solid #1f2c46;border-radius:6px;background:#0c1526;font-size:13px;position:relative}
+  .cell.water{background:#0c1526}
+  .cell.ship.me{background:#0f2338;border-color:#244166}
+  .cell.ship.me.revealed{outline:2px dashed #2f6fc8}
+  .cell.mark.miss{background:var(--miss)}
+  .cell.mark.hit{background:var(--hit)}
+  .cell.sunk{box-shadow: inset 0 0 0 3px #f3b33a, 0 0 12px rgba(243,179,58,.25)}
+  .cell.blocked{background: var(--blocked);
+    background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.06) 0, rgba(255,255,255,.06) 6px, transparent 6px, transparent 12px);
+    border-color:#2a3a5a;}
+  .legend{font-size:13px;color:var(--muted)}
+  .title{font-weight:700;color:#cfe1ff}
+  .status{min-height:22px; transition: color .3s ease}
+  .badge{font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid #2a4470;background:#0e1a2c;color:#bcd1f7}
+  .side{display:grid;gap:12px}
+  .side h3{margin:0;font-size:14px;color:#cfe1ff}
+  .fleetList{display:grid;gap:6px}
+  .fleetItem{display:flex;justify-content:space-between;align-items:center;border:1px solid #22365c;background:#0c1628;border-radius:10px;padding:6px 8px;font-size:13px}
+  .turnBanner{padding:8px 12px;border-radius:10px;background:#142849;border:1px solid #24477e; font-weight:700; text-align:center}
+  .turn-cpu{background:#3a1424;border-color:#7e2442}
+  .disabled{pointer-events:none; opacity:.8}
+  .instructionBox{background:#0d1729;border:1px solid #203357;border-radius:10px;padding:10px;font-size:14px;color:#cfe1ff;line-height:1.5}
+  .hidden{display:none}
+  .cell.revealed{outline:2px dashed #2f6fc8; box-shadow:0 0 8px rgba(47,111,200,.35) inset; background:rgba(47,111,200,.12)}
+  .cell.revealed.invalid{outline:2px solid #ff5d5d; box-shadow:0 0 10px rgba(255,93,93,.35)}
+  /* Modal + storm toast */
+  .modalBackdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:999}
+  .modalBackdrop.show{display:flex}
+  .modal{background:#0f1c33;border:1px solid #24477e;border-radius:16px;box-shadow:0 30px 60px rgba(0,0,0,.5);padding:20px 18px;min-width:280px;max-width:420px;position:relative;text-align:center}
+  .modal h2{margin:6px 0 10px 0;font-size:22px}
+  .modal .btnRow{display:flex;justify-content:center;margin-top:10px}
+  .modal .closeX{position:absolute;top:8px;right:10px;background:transparent;border:none;color:#9bb8ff;font-size:18px;cursor:pointer}
+  .enemyWrap{position:relative}
+  .stormToast{position:absolute;top:6px;right:6px;background:#112544;color:#cfe8ff;border:1px solid #2a4470;border-radius:10px;padding:8px 10px;font-weight:700;box-shadow:0 8px 20px rgba(0,0,0,.35)}
+  .stormToast.hidden{display:none}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" style="grid-column:1/-1">
+      <h1 class="heroTitle">⚓️ Battleship — <span class="title">Submarine Storm</span></h1>
+      <div class="heroSub">Classic Battleship with a twist <span id="stormBadge" class="stormBadge pulse">⛈️ Storm shift every <b>5</b> player shots</span></div>
+      <div class="hud">
+        <div class="badges">
+          <span class="badge">10×10 Boards</span>
+          <span class="badge">Fleet: Carrier(5), Battleship(4), Cruiser(3), Sub(3), Destroyer(2)</span>
+          <span class="badge">1P vs CPU</span>
+          <span class="badge">Storm Shift: 5 shots</span>
+        </div>
+        <div>
+          <button id="newgame" class="btn">New Game</button>
+          <button id="rotate" class="btn" title="Rotate ship during placement (R)">Rotate (R)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Key / Legend ABOVE the boards -->
+    <div class="card legendBox" style="grid-column:1/-1">
+      <h3 style='margin:0 0 6px 0'>Key</h3>
+      <div style='display:flex;gap:12px;flex-wrap:wrap'>
+        <div style='display:flex;align-items:center;gap:6px'><div style='width:20px;height:20px;background:#0c1526;border:1px solid #1f2c46;border-radius:4px'></div> Water</div>
+        <div style='display:flex;align-items:center;gap:6px'><div style='width:20px;height:20px;background:var(--miss);border-radius:4px'></div> Miss</div>
+        <div style='display:flex;align-items:center;gap:6px'><div style='width:20px;height:20px;background:var(--hit);border-radius:4px'></div> Hit</div>
+        <div style='display:flex;align-items:center;gap:6px'><div style='width:20px;height:20px;background:var(--blocked);background-image:repeating-linear-gradient(45deg, rgba(255,255,255,.06) 0, rgba(255,255,255,.06) 6px, transparent 6px, transparent 12px);border-radius:4px'></div> Blocked Area</div>
+        <div style='display:flex;align-items:center;gap:6px'><div style='width:20px;height:20px;box-shadow:inset 0 0 0 3px #f3b33a,0 0 12px rgba(243,179,58,.25);border-radius:4px'></div> Sunk Ship</div>
+        <div style='display:flex;align-items:center;gap:6px'><div style='width:20px;height:20px;outline:2px solid #ff5d5d;box-shadow:0 0 10px rgba(255,93,93,.35);border-radius:4px'></div> Invalid Placement</div>
+      </div>
+    </div>
+
+    <div id="grids" class="grids">
+      <div>
+        <div class="legend"><b>Your Grid</b> — place ships, then defend</div>
+        <div id="playerGrid" class="grid" aria-label="Your Grid"></div>
+      </div>
+      <div class="enemyWrap">
+        <div id="enemyPanel" class="instructionBox">
+          <b>Placement Instructions</b><br>
+          • Click a starting cell to place the highlighted ship.<br>
+          • Press <b>R</b> or click <b>Rotate</b> to toggle horizontal/vertical.<br>
+          • Ships are straight classic shapes (Carrier 5, Battleship 4, Cruiser 3, Sub 3, Destroyer 2).<br>
+          • After placing all ships, you’ll switch to the <b>Battle Phase</b>.<br>
+          • Click the enemy grid to fire; you and the CPU take strict turns.<br>
+          • Every <b>5 player shots</b>, a storm shifts all ships by one cell!
+        </div>
+        <div id="enemyGrid" class="grid hidden" aria-label="Enemy Grid"></div>
+        <div id="stormToast" class="stormToast hidden">⛈️ Storm is happening…</div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <div class="card">
+        <div class="hud">
+          <div class="pill">Phase: <span id="phase">Placement</span></div>
+          <div class="pill">Turn: <span id="turn">You</span></div>
+          <div class="pill">Shots: <span id="shots">0</span></div>
+          <div class="pill">Storm in: <span id="stormIn">5</span></div>
+        </div>
+        <div id="turnBanner" class="turnBanner">Your Turn</div>
+        <div id="status" class="status" style="margin-top:8px"></div>
+      </div>
+
+      <div class="card side">
+        <h3>Fleets</h3>
+        <div class="fleetList">
+          <div class="fleetItem"><span>Enemy Carrier (5)</span><span id="e-5">❓</span></div>
+          <div class="fleetItem"><span>Enemy Battleship (4)</span><span id="e-4">❓</span></div>
+          <div class="fleetItem"><span>Enemy Cruiser (3)</span><span id="e-3a">❓</span></div>
+          <div class="fleetItem"><span>Enemy Submarine (3)</span><span id="e-3b">❓</span></div>
+          <div class="fleetItem"><span>Enemy Destroyer (2)</span><span id="e-2">❓</span></div>
+        </div>
+        <h3>Your Fleet</h3>
+        <div class="fleetList">
+          <div class="fleetItem"><span>Carrier (5)</span><span id="m-5">✅</span></div>
+          <div class="fleetItem"><span>Battleship (4)</span><span id="m-4">✅</span></div>
+          <div class="fleetItem"><span>Cruiser (3)</span><span id="m-3a">✅</span></div>
+          <div class="fleetItem"><span>Submarine (3)</span><span id="m-3b">✅</span></div>
+          <div class="fleetItem"><span>Destroyer (2)</span><span id="m-2">✅</span></div>
+        </div></div></div></div>
+
+  <!-- Endgame Modal -->
+  <div id="endModal" class="modalBackdrop" role="dialog" aria-modal="true" aria-labelledby="endTitle">
+    <div class="modal">
+      <button id="modalClose" class="closeX" aria-label="Close">✕</button>
+      <h2 id="endTitle">You Win!</h2>
+      <div id="endSub" class="legend">Well played, Admiral.</div>
+      <div class="btnRow"><button id="modalNew" class="btn">New Game</button></div>
+    </div>
+  </div>
+
+<script>
+window.addEventListener('DOMContentLoaded', () => {
+  const stormBadge=document.getElementById('stormBadge');
+  const grids=document.getElementById('grids');
+
+  function setBadgePulse(on){ if(stormBadge) stormBadge.classList.toggle('pulse', !!on); }
+
+  // --- Game implementation ---
+  (function(){
+    const N=10;
+    const SHIPS=[5,4,3,3,2];
+
+    const elPlayer=document.getElementById('playerGrid');
+    const elEnemy=document.getElementById('enemyGrid');
+    const elEnemyPanel=document.getElementById('enemyPanel');
+    const elShots=document.getElementById('shots');
+    const elStormIn=document.getElementById('stormIn');
+    const elTurn=document.getElementById('turn');
+    const elPhase=document.getElementById('phase');
+    const elBanner=document.getElementById('turnBanner');
+    const elStatus=document.getElementById('status');
+    const btnNew=document.getElementById('newgame');
+    const btnRotate=document.getElementById('rotate');
+    const endModal=document.getElementById('endModal');
+    const endTitle=document.getElementById('endTitle');
+    const endSub=document.getElementById('endSub');
+    const modalNew=document.getElementById('modalNew');
+    const modalClose=document.getElementById('modalClose');
+    const stormToast=document.getElementById('stormToast');
+
+    const e5=document.getElementById('e-5'), e4=document.getElementById('e-4'), e3a=document.getElementById('e-3a'), e3b=document.getElementById('e-3b'), e2=document.getElementById('e-2');
+    const m5=document.getElementById('m-5'), m4=document.getElementById('m-4'), m3a=document.getElementById('m-3a'), m3b=document.getElementById('m-3b'), m2=document.getElementById('m-2');
+
+    document.addEventListener('keydown', (e)=>{ if(e.key.toLowerCase()==='r') toggleOrient(); });
+    btnRotate.addEventListener('click', toggleOrient);
+    btnNew.addEventListener('click', init);
+    modalNew.addEventListener('click', ()=>{ hideEndModal(); init(); });
+    modalClose.addEventListener('click', hideEndModal);
+
+    let state;
+
+    function makeEmptyBoard(){
+      const b=[]; for(let y=0;y<N;y++){ const row=[]; for(let x=0;x<N;x++) row.push({shipId:null, idx:null, hit:false, fired:false, sunk:false, blocked:false, permBlock:false}); b.push(row);} return b;
+    }
+
+    function placeFleetRandom(board){
+      const ships=[];
+      for(let len of SHIPS){
+        let placed=false; let guard=0;
+        while(!placed && guard++<500){
+          const horiz=Math.random()<0.5;
+          const x0=Math.floor(Math.random()*(horiz?N-len+1:N));
+          const y0=Math.floor(Math.random()*(horiz?N:N-len+1));
+          const cells=[]; let ok=true;
+          for(let i=0;i<len;i++){
+            const x=horiz?x0+i:x0; const y=horiz?y0:y0+i;
+            if(board[y][x].shipId!==null){ ok=false; break; }
+            cells.push([x,y]);
+          }
+          if(!ok) continue;
+          const id=ships.length;
+          ships.push({id,len,cells:cells.map(([x,y],idx)=>({x,y,hit:false,idx}))});
+          for(const {x,y,idx} of ships[id].cells){ const cell=board[y][x]; cell.shipId=id; cell.idx=idx; }
+          placed=true;
+        }
+        if(!placed) throw new Error('Could not place ship');
+      }
+      return ships;
+    }
+
+    function init(){
+      state={
+        phase:'placement',
+        orient:'h',
+        placingIndex:0,
+        player:{board:makeEmptyBoard(), ships:[]},
+        enemy :{board:makeEmptyBoard(), ships:[]},
+        shots:0, stormStep:5, over:false, turn:'you', firstStormDone:false, stormActive:false
+      };
+      state.enemy.ships=placeFleetRandom(state.enemy.board);
+      state.player.ships=SHIPS.map((len,i)=>({id:i,len,cells:[]}));
+
+      elEnemyPanel.classList.remove('hidden');
+      elEnemy.classList.add('hidden');
+      setBadgePulse(true);
+
+      drawBoards();
+      updateHud();
+      msg("Place your Carrier (5). Click a start cell; press R to rotate.");
+    }
+
+    function drawBoards(){
+      if(stormToast) stormToast.classList.toggle('hidden', !state.stormActive);
+      // Player grid
+      elPlayer.innerHTML='';
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+        const cell=state.player.board[y][x];
+        const d=document.createElement(state.phase==='placement'?'button':'div');
+        if(state.phase==='placement') d.type='button';
+        d.className='cell water';
+        if(cell.shipId!==null){ d.classList.add('ship','me'); }
+        if(cell.fired && !cell.hit && !cell.blocked) d.classList.add('mark','miss');
+        if(cell.hit) d.classList.add('mark','hit');
+        if(cell.sunk) d.classList.add('sunk');
+        if(cell.blocked) d.classList.add('blocked');
+        if(state.phase==='placement'){
+          d.addEventListener('mouseenter',()=>previewPlacement(x,y,true));
+          d.addEventListener('mouseleave',()=>previewPlacement(x,y,false));
+          d.addEventListener('click',()=>placeAt(x,y));
+        }
+        elPlayer.appendChild(d);
+      }
+
+      // Enemy grid
+      elEnemy.innerHTML='';
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+        const cell=state.enemy.board[y][x];
+        const b=document.createElement('button');
+        b.type='button'; b.className='cell water'; b.setAttribute('aria-label',`Enemy ${x},${y}`);
+        if(cell.fired && !cell.hit && !cell.blocked) b.classList.add('mark','miss');
+        if(cell.hit) b.classList.add('mark','hit');
+        if(cell.sunk) b.classList.add('sunk');
+        if(cell.blocked) b.classList.add('blocked');
+        const canClick = !state.over && state.phase==='battle' && state.turn==='you' && !state.stormActive && !cell.fired && !cell.blocked;
+        b.disabled = !canClick;
+        if(canClick) b.addEventListener('click',()=>playerFire(x,y));
+        elEnemy.appendChild(b);
+      }
+
+      elEnemy.classList.toggle('disabled', !(state.phase==='battle' && state.turn==='you'));
+      elPlayer.classList.toggle('disabled', state.phase==='placement' ? false : (state.turn==='you'));
+    }
+
+    function updateHud(){
+      elShots.textContent=state.shots;
+      elStormIn.textContent=(state.stormStep - (state.shots % state.stormStep)) || state.stormStep;
+      elPhase.textContent=state.phase==='placement'?'Placement':'Battle';
+      elTurn.textContent=state.turn==='you'?'You':'CPU';
+      elBanner.textContent= state.stormActive ? '⛈️ Storm' : (state.turn==='you'?'Your Turn':'CPU Turn');
+      elBanner.classList.toggle('turn-cpu', !state.stormActive && state.turn!=='you');
+
+      setEnemyStatus();
+      setMineStatus();
+    }
+
+    function setEnemyStatus(){
+      e5.textContent = sunkLen(state.enemy.ships,5)? '💥 Sunk' : '❓';
+      e4.textContent = sunkLen(state.enemy.ships,4)? '💥 Sunk' : '❓';
+      const sunk3 = countSunk(state.enemy.ships,3);
+      e3a.textContent = sunk3>=1? '💥 Sunk' : '❓';
+      e3b.textContent = sunk3>=2? '💥 Sunk' : '❓';
+      e2.textContent = sunkLen(state.enemy.ships,2)? '💥 Sunk' : '❓';
+    }
+    function setMineStatus(){
+      m5.textContent = sunkLen(state.player.ships,5)? '💥 Sunk' : '✅';
+      m4.textContent = sunkLen(state.player.ships,4)? '💥 Sunk' : '✅';
+      const sunk3 = countSunk(state.player.ships,3);
+      m3a.textContent = sunk3>=1? '💥 Sunk' : '✅';
+      m3b.textContent = sunk3>=2? '💥 Sunk' : '✅';
+      m2.textContent = sunkLen(state.player.ships,2)? '💥 Sunk' : '✅';
+    }
+    function sunkLen(ships,len){ return ships.some(s=>s.len===len && s.cells.length && s.cells.every(c=>c.hit)); }
+    function countSunk(ships,len){ return ships.filter(s=>s.len===len && s.cells.length && s.cells.every(c=>c.hit)).length; }
+
+    function previewPlacement(x,y, on){
+      if(state.phase!=='placement') return;
+      const len=SHIPS[state.placingIndex];
+      const dx = state.orient==='h'?1:0; const dy=state.orient==='v'?1:0;
+      const valid = canPlaceAt(x,y,len,state.orient,state.player.board);
+      for(let i=0;i<len;i++){
+        const xx=x+i*dx, yy=y+i*dy;
+        if(xx<0||yy<0||xx>=N||yy>=N) break;
+        const idx=yy*N+xx; const node=elPlayer.children[idx];
+        if(on){
+          node.classList.add('revealed');
+          if(!valid) node.classList.add('invalid');
+        } else {
+          node.classList.remove('revealed');
+          node.classList.remove('invalid');
+        }
+      }
+    }
+
+    function canPlaceAt(x,y,len,orient,board){
+      const dx = orient==='h'?1:0; const dy=orient==='v'?1:0;
+      for(let i=0;i<len;i++){
+        const xx=x+i*dx, yy=y+i*dy;
+        if(xx<0||yy<0||xx>=N||yy>=N) return false;
+        if(board[yy][xx].shipId!==null) return false; // overlap blocked only; touching allowed
+      }
+      return true;
+    }
+
+    function placeAt(x,y){
+      if(state.phase!=='placement') return;
+      const len=SHIPS[state.placingIndex];
+      if(!canPlaceAt(x,y,len,state.orient,state.player.board)) { msg('Cannot place there. Try a different spot or rotate.'); return; }
+      const id=state.placingIndex;
+      const cells=[]; const dx=state.orient==='h'?1:0; const dy=state.orient==='v'?1:0;
+      for(let i=0;i<len;i++){
+        const xx=x+i*dx, yy=y+i*dy; const cell=state.player.board[yy][xx]; cell.shipId=id; cell.idx=i; cells.push({x:xx,y:yy,hit:false,idx:i});
+      }
+      state.player.ships[id].cells=cells;
+      state.placingIndex++;
+      drawBoards();
+      if(state.placingIndex<SHIPS.length){
+        const nextLen=SHIPS[state.placingIndex];
+        msg(`Placed. Now place your ${nameOf(nextLen)} (${nextLen}).`);
+      } else {
+        state.phase='battle'; state.turn='you'; setBadgePulse(true);
+        elEnemyPanel.classList.add('hidden');
+        elEnemy.classList.remove('hidden');
+        msg('Battle starts! Fire on the enemy grid.');
+        updateHud(); drawBoards();
+      }
+    }
+
+    function toggleOrient(){
+      if(state.phase!=='placement') return; state.orient = state.orient==='h'?'v':'h';
+      msg(`Orientation: ${state.orient==='h'?'Horizontal':'Vertical'}. Click to place.`);
+    }
+
+    function nameOf(len){ return len===5?'Carrier': len===4?'Battleship': len===3?(state.placingIndex===2?'Cruiser':'Submarine') : 'Destroyer'; }
+
+    function inBounds(x,y){ return x>=0 && y>=0 && x<N && y<N; }
+
+    function playerFire(x,y){
+      if(state.stormActive) return;
+      if(state.over || state.turn!=='you' || state.phase!=='battle') return;
+      const c=state.enemy.board[y][x];
+      if(c.fired || c.blocked) return;
+      c.fired=true;
+      if(c.shipId!==null){
+        c.hit=true; const ship=state.enemy.ships[c.shipId]; ship.cells[c.idx].hit=true; msg('Hit!');
+        if(ship.cells.every(seg=>seg.hit)){
+          markSunkAndSurroundings(state.enemy, ship);
+          msg(`You sunk their ${shipName(ship.len)}!`);
+        }
+      } else { msg('Miss.'); }
+
+      state.shots++;
+      setBadgePulse(false);
+      if(state.shots%state.stormStep===0){
+        const isFirst = !state.firstStormDone;
+        state.stormActive = true;
+        triggerStormVisuals(isFirst);
+        state.firstStormDone = true;
+        msg('⛈️ Submarine Storm! Fleets shift position.');
+        // Do actual ship movement 1s after the 2s glow ends (total ~3s)
+        setTimeout(()=>{ 
+          doStormShift();
+          state.stormActive = false;
+          if(fleetSunk(state.enemy.ships)) return end('You win! Enemy fleet destroyed.');
+          state.turn='cpu'; updateHud(); drawBoards();
+          setTimeout(cpuFire, 650);
+        }, 3000);
+        updateHud(); drawBoards();
+        return;
+      }
+
+      if(fleetSunk(state.enemy.ships)) return end('You win! Enemy fleet destroyed.');
+
+      state.turn='cpu'; updateHud(); drawBoards();
+      setTimeout(cpuFire, 650);
+    }
+
+    function cpuFire(){
+      if(state.over || state.phase!=='battle' || state.stormActive) return;
+      let guard=0, x,y, c;
+      do { x=Math.floor(Math.random()*N); y=Math.floor(Math.random()*N); c=state.player.board[y][x]; guard++; }
+      while((c.fired) && guard<500);
+      if(c.fired) return end('CPU gave up? (No moves left)');
+      c.fired=true;
+      if(c.shipId!==null){
+        c.hit=true; const ship=state.player.ships[c.shipId]; ship.cells[c.idx].hit=true; msg('CPU hits your ship!');
+        if(ship.cells.every(seg=>seg.hit)){
+          markSunkAndSurroundings(state.player, ship);
+          msg(`CPU sunk your ${shipName(ship.len)}!`);
+        }
+      } else { msg('CPU misses.'); }
+
+      if(fleetSunk(state.player.ships)) return end('Defeat! Your fleet was sunk.');
+
+      state.turn='you'; updateHud(); drawBoards(); setBadgePulse(true);
+    }
+
+    function shipName(len){ return len===5?'Carrier': len===4?'Battleship': len===3?'Cruiser/Sub':'Destroyer'; }
+
+    function markSunkAndSurroundings(side, ship){
+      for(const seg of ship.cells){ const cell=side.board[seg.y][seg.x]; cell.sunk=true; cell.hit=true; cell.fired=true; }
+      const OFF=[-1,0,1];
+      for(const seg of ship.cells){
+        for(const dy of OFF) for(const dx of OFF){
+          const x=seg.x+dx, y=seg.y+dy; if(dx===0&&dy===0) continue; if(!inBounds(x,y)) continue;
+          const cell=side.board[y][x];
+          if(cell.shipId===null){ cell.fired=true; cell.blocked=true; cell.permBlock=true; }
+        }
+      }
+    }
+
+    function fleetSunk(ships){
+      return ships.every(s=>s.cells.length && s.cells.every(seg=>seg.hit));
+    }
+
+    function doStormShift(){
+      moveFleet(state.player);
+      moveFleet(state.enemy);
+      resetNonShipCells(state.player);
+      resetNonShipCells(state.enemy);
+      drawBoards();
+      updateHud();
+    }
+
+    function canShiftShip(side, ship, dx, dy){
+      // Validate a whole-ship shift preserves contiguity, stays in-bounds, and doesn't collide.
+      for(const seg of ship.cells){
+        const nx = seg.x + dx, ny = seg.y + dy;
+        if(!inBounds(nx,ny)) return false;                       // can't leave grid
+        const cell = side.board[ny][nx];
+        if(cell.permBlock) return false;                         // can't enter permanently blocked water
+        if(cell.shipId !== null && cell.shipId !== ship.id) return false; // can't overlap another ship
+      }
+      return true;
+    }
+
+    function moveFleet(side){
+      const DIRS=[[1,0],[-1,0],[0,1],[0,-1]];
+
+      for(const ship of side.ships){
+        if(!ship.cells.length) continue;
+        if(ship.cells.every(c=>c.hit)) continue; // sunk ships don’t move
+        // try directions in random order; move by exactly one cell if possible
+        const dirs = [...DIRS].sort(()=>Math.random()-0.5);
+        let moved = false;
+        for(const [dx,dy] of dirs){
+          if(!canShiftShip(side, ship, dx, dy)) continue;
+          // clear current positions
+          for(const seg of ship.cells){ const cell=side.board[seg.y][seg.x]; cell.shipId=null; cell.idx=null; }
+          // apply shift
+          for(const seg of ship.cells){ seg.x+=dx; seg.y+=dy; }
+          // re-stamp cells; preserve hit flags on moved segments
+          for(const seg of ship.cells){ const cell=side.board[seg.y][seg.x]; cell.shipId=ship.id; cell.idx=seg.idx; if(seg.hit){ cell.hit=true; cell.fired=true; cell.sunk=false; } }
+          moved = true; break;
+        }
+        // if no direction worked, ship stays in place (intact)
+        if(!moved) { /* intentionally no-op */ }
+      }
+    }
+
+    function resetNonShipCells(side){
+      for(let y=0;y<N;y++){
+        for(let x=0;x<N;x++){
+          const cell=side.board[y][x];
+          if(cell.shipId===null){
+            if(!cell.permBlock){
+              cell.fired=false;
+              cell.hit=false;
+              cell.blocked=false;
+              cell.sunk=false;
+            } else {
+              cell.fired=true;
+              cell.blocked=true;
+            }
+          }
+        }
+      }
+    }
+
+    function triggerStormVisuals(isFirst){
+      if(grids){
+        grids.classList.add('storm-glow');
+        if(stormToast) stormToast.classList.remove('hidden');
+        setTimeout(()=>{ grids.classList.remove('storm-glow'); }, 2000);
+      }
+      if(isFirst){
+        if(stormBadge){ stormBadge.classList.add('flash'); setTimeout(()=>stormBadge.classList.remove('flash'), 2000); }
+        if(elStatus){
+          elStatus.style.color = '#73d7ff';
+          setTimeout(()=>{ elStatus.style.color = ''; }, 2000);
+        }
+      }
+      // Hide toast after total storm sequence ends (2s glow + 1s delay)
+      setTimeout(()=>{ if(stormToast) stormToast.classList.add('hidden'); }, 3000);
+    }
+
+    function msg(t){ elStatus.textContent=t; }
+    function end(t){
+      state.over=true; updateHud(); drawBoards(); msg(t+" Click New Game to play again.");
+      const youWin = /You win!/i.test(t);
+      showEndModal(youWin);
+    }
+    function showEndModal(youWin){
+      endTitle.textContent = youWin ? 'You Win!' : 'You Lose :(';
+      endSub.textContent = youWin ? 'Enemy fleet destroyed.' : 'Your fleet was sunk.';
+      endModal.classList.add('show');
+    }
+    function hideEndModal(){ endModal.classList.remove('show'); }
+
+    // --- minimal runtime tests ---
+    function tests(){
+      const results=[];
+      results.push(['dom exists', !!elPlayer && !!elEnemy && !!elStatus]);
+      results.push(['initial phase', state.phase==='placement']);
+      results.push(['badge pulses initially', stormBadge.classList.contains('pulse')]);
+      // simulate preview validity calc
+      results.push(['can place at 0,0 len 5 horiz', canPlaceAt(0,0,5,'h', state.player.board)]);
+      // storm visuals callable
+      triggerStormVisuals(false); results.push(['triggerStormVisuals callable', true]);
+      // movement integrity tests (mini side)
+      const mini = {board: makeEmptyBoard(), ships:[{id:0,len:4,cells:[{x:0,y:0,hit:false,idx:0},{x:1,y:0,hit:false,idx:1},{x:2,y:0,hit:false,idx:2},{x:3,y:0,hit:false,idx:3}]}]};
+      // stamp mini ship
+      for(const s of mini.ships[0].cells){ mini.board[s.y][s.x].shipId=0; mini.board[s.y][s.x].idx=s.idx; }
+      results.push(['reject OOB (left)', !canShiftShip(mini, mini.ships[0], -1, 0)]);
+      results.push(['allow right inside bounds', canShiftShip(mini, mini.ships[0], 1, 0)]);
+      // collision test
+      mini.board[0][4].shipId = 99; results.push(['reject collision with other ship', !canShiftShip(mini, mini.ships[0], 1, 0)]);
+      // extra: placement edge invalid
+      results.push(['reject placement off-board', !canPlaceAt(8,9,5,'h', state.player.board)]);
+      // extra: permBlock prevents movement
+      mini.board[0][0].shipId=0; mini.board[0][1].shipId=0; mini.board[0][2].shipId=0; mini.board[0][3].shipId=0;
+      mini.board[0][4].shipId=null; mini.board[0][4].permBlock=true;
+      results.push(['reject move into permBlock', !canShiftShip(mini, mini.ships[0], 1, 0)]);
+
+      console.table(results.map(([k,v])=>({test:k, pass:!!v})));
+    }
+
+    // boot
+    init();
+    tests();
+  })();
+});
+</script>
+</body>
+</html>
