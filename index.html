@@ -321,6 +321,10 @@ window.addEventListener('DOMContentLoaded', () => {
     }
     function sunkLen(ships,len){ return ships.some(s=>s.len===len && s.cells.length && s.cells.every(c=>c.hit)); }
     function countSunk(ships,len){ return ships.filter(s=>s.len===len && s.cells.length && s.cells.every(c=>c.hit)).length; }
+    function isShipSunk(side, ship){
+      if(!ship || !ship.cells || !ship.cells.length) return false;
+      return ship.cells.every(seg => side.board[seg.y] && side.board[seg.y][seg.x] && side.board[seg.y][seg.x].hit === true);
+    }
 
     function previewPlacement(x,y, on){
       if(state.phase!=='placement') return;
@@ -391,8 +395,12 @@ window.addEventListener('DOMContentLoaded', () => {
       if(c.fired || c.blocked) return;
       c.fired=true;
       if(c.shipId!==null){
-        c.hit=true; const ship=state.enemy.ships[c.shipId]; ship.cells[c.idx].hit=true; msg('Hit!');
-        if(ship.cells.every(seg=>seg.hit)){
+        c.hit=true; const ship=state.enemy.ships[c.shipId];
+        // mark hit both on board and ship model (guard idx)
+        c.hit = true; c.fired = true;
+        if(typeof c.idx === 'number' && ship && ship.cells[c.idx]) ship.cells[c.idx].hit = true;
+        msg('Hit!');
+        if(isShipSunk(state.enemy, ship)){
           markSunkAndSurroundings(state.enemy, ship);
           msg(`You sunk their ${shipName(ship.len)}!`);
         }
@@ -432,8 +440,11 @@ window.addEventListener('DOMContentLoaded', () => {
       if(c.fired) return end('CPU gave up? (No moves left)');
       c.fired=true;
       if(c.shipId!==null){
-        c.hit=true; const ship=state.player.ships[c.shipId]; ship.cells[c.idx].hit=true; msg('CPU hits your ship!');
-        if(ship.cells.every(seg=>seg.hit)){
+        const ship=state.player.ships[c.shipId];
+        c.hit=true;
+        if(typeof c.idx === 'number' && ship && ship.cells[c.idx]) ship.cells[c.idx].hit = true;
+        msg('CPU hits your ship!');
+        if(isShipSunk(state.player, ship)){
           markSunkAndSurroundings(state.player, ship);
           msg(`CPU sunk your ${shipName(ship.len)}!`);
         }
@@ -447,7 +458,17 @@ window.addEventListener('DOMContentLoaded', () => {
     function shipName(len){ return len===5?'Carrier': len===4?'Battleship': len===3?'Cruiser/Sub':'Destroyer'; }
 
     function markSunkAndSurroundings(side, ship){
-      for(const seg of ship.cells){ const cell=side.board[seg.y][seg.x]; cell.sunk=true; cell.hit=true; cell.fired=true; }
+      // Mark every segment as hit on both the model and the board, then block perimeter
+      for(const seg of ship.cells){ seg.hit = true; const cell=side.board[seg.y][seg.x]; cell.sunk=true; cell.hit=true; cell.fired=true; }
+      const OFF=[-1,0,1];
+      for(const seg of ship.cells){
+        for(const dy of OFF) for(const dx of OFF){
+          const x=seg.x+dx, y=seg.y+dy; if(dx===0&&dy===0) continue; if(!inBounds(x,y)) continue;
+          const cell=side.board[y][x];
+          if(cell.shipId===null){ cell.fired=true; cell.blocked=true; cell.permBlock=true; }
+        }
+      }
+    }
       const OFF=[-1,0,1];
       for(const seg of ship.cells){
         for(const dy of OFF) for(const dx of OFF){
@@ -465,6 +486,9 @@ window.addEventListener('DOMContentLoaded', () => {
     function doStormShift(){
       moveFleet(state.player);
       moveFleet(state.enemy);
+      // After movement, sync model <-> board hit flags
+      syncShipHitsFromBoard(state.player);
+      syncShipHitsFromBoard(state.enemy);
       resetNonShipCells(state.player);
       resetNonShipCells(state.enemy);
       drawBoards();
@@ -483,28 +507,43 @@ window.addEventListener('DOMContentLoaded', () => {
       return true;
     }
 
+    function canShiftShip(side, ship, dx, dy){
+      for(const seg of ship.cells){
+        const nx = seg.x + dx, ny = seg.y + dy;
+        if(!inBounds(nx,ny)) return false;
+        const cell = side.board[ny][nx];
+        if(cell.permBlock) return false;
+        if(cell.shipId !== null && cell.shipId !== ship.id) return false;
+      }
+      return true;
+    }
     function moveFleet(side){
       const DIRS=[[1,0],[-1,0],[0,1],[0,-1]];
-
       for(const ship of side.ships){
         if(!ship.cells.length) continue;
         if(ship.cells.every(c=>c.hit)) continue; // sunk ships don’t move
-        // try directions in random order; move by exactly one cell if possible
         const dirs = [...DIRS].sort(()=>Math.random()-0.5);
-        let moved = false;
+        let moved=false;
         for(const [dx,dy] of dirs){
           if(!canShiftShip(side, ship, dx, dy)) continue;
-          // clear current positions
+          // clear current board footprint
           for(const seg of ship.cells){ const cell=side.board[seg.y][seg.x]; cell.shipId=null; cell.idx=null; }
-          // apply shift
+          // move model
           for(const seg of ship.cells){ seg.x+=dx; seg.y+=dy; }
-          // re-stamp cells; preserve hit flags on moved segments
-          for(const seg of ship.cells){ const cell=side.board[seg.y][seg.x]; cell.shipId=ship.id; cell.idx=seg.idx; if(seg.hit){ cell.hit=true; cell.fired=true; cell.sunk=false; } }
-          moved = true; break;
+          // stamp new footprint; keep hits in both model and board
+          for(const seg of ship.cells){
+            const cell=side.board[seg.y][seg.x];
+            cell.shipId=ship.id; cell.idx=seg.idx;
+            if(cell.hit) seg.hit = true; // if board already marked (e.g., repeated move), mirror to model
+            if(seg.hit){ cell.hit=true; cell.fired=true; cell.sunk=false; }
+          }
+          moved=true; break;
         }
-        // if no direction worked, ship stays in place (intact)
-        if(!moved) { /* intentionally no-op */ }
+        if(!moved){ /* stay put */ }
       }
+    }
+    function syncShipHitsFromBoard(side){
+      for(const ship of side.ships){ for(const seg of ship.cells){ seg.hit = side.board[seg.y][seg.x].hit === true; } }
     }
 
     function resetNonShipCells(side){
@@ -592,3 +631,4 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
