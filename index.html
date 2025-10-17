@@ -188,12 +188,17 @@ window.addEventListener('DOMContentLoaded', () => {
     const modalClose=document.getElementById('modalClose');
     const stormToast=document.getElementById('stormToast');
 
+    // timer management to avoid stray pending timeouts breaking UI after New Game
+    let timers=[];
+    const later=(fn,ms)=>{ const id=setTimeout(fn,ms); timers.push(id); return id; };
+    function clearTimers(){ for(const id of timers) clearTimeout(id); timers.length=0; }
+
     const e5=document.getElementById('e-5'), e4=document.getElementById('e-4'), e3a=document.getElementById('e-3a'), e3b=document.getElementById('e-3b'), e2=document.getElementById('e-2');
     const m5=document.getElementById('m-5'), m4=document.getElementById('m-4'), m3a=document.getElementById('m-3a'), m3b=document.getElementById('m-3b'), m2=document.getElementById('m-2');
 
     document.addEventListener('keydown', (e)=>{ if(e.key.toLowerCase()==='r') toggleOrient(); });
     btnRotate.addEventListener('click', toggleOrient);
-    btnNew.addEventListener('click', init);
+    btnNew.addEventListener('click', ()=>{ hideEndModal(); init(); });
     modalNew.addEventListener('click', ()=>{ hideEndModal(); init(); });
     modalClose.addEventListener('click', hideEndModal);
 
@@ -229,6 +234,12 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     function init(){
+      clearTimers();
+      // reset any storm/visual artifacts
+      if(grids) grids.classList.remove('storm-glow');
+      if(stormToast) stormToast.classList.add('hidden');
+      if(elStatus) elStatus.style.color='';
+
       state={
         phase:'placement',
         orient:'h',
@@ -240,9 +251,17 @@ window.addEventListener('DOMContentLoaded', () => {
       state.enemy.ships=placeFleetRandom(state.enemy.board);
       state.player.ships=SHIPS.map((len,i)=>({id:i,len,cells:[]}));
 
+      // ensure correct panels are visible for a clean start
       elEnemyPanel.classList.remove('hidden');
       elEnemy.classList.add('hidden');
+      elPlayer.classList.remove('disabled');
+      elEnemy.classList.add('disabled');
+
       setBadgePulse(true);
+
+      // hard refresh board contents
+      elPlayer.innerHTML='';
+      elEnemy.innerHTML='';
 
       drawBoards();
       updateHud();
@@ -350,7 +369,7 @@ window.addEventListener('DOMContentLoaded', () => {
       for(let i=0;i<len;i++){
         const xx=x+i*dx, yy=y+i*dy;
         if(xx<0||yy<0||xx>=N||yy>=N) return false;
-        if(board[yy][xx].shipId!==null) return false; // overlap blocked only; touching allowed
+        if(board[yy][xx].shipId!==null) return false; // overlap only; touching allowed
       }
       return true;
     }
@@ -395,7 +414,7 @@ window.addEventListener('DOMContentLoaded', () => {
       if(c.fired || c.blocked) return;
       c.fired=true;
       if(c.shipId!==null){
-        c.hit=true; const ship=state.enemy.ships[c.shipId];
+        const ship=state.enemy.ships[c.shipId];
         // mark hit both on board and ship model (guard idx)
         c.hit = true; c.fired = true;
         if(typeof c.idx === 'number' && ship && ship.cells[c.idx]) ship.cells[c.idx].hit = true;
@@ -415,12 +434,12 @@ window.addEventListener('DOMContentLoaded', () => {
         state.firstStormDone = true;
         msg('⛈️ Submarine Storm! Fleets shift position.');
         // Do actual ship movement 1s after the 2s glow ends (total ~3s)
-        setTimeout(()=>{ 
+        later(()=>{ 
           doStormShift();
           state.stormActive = false;
           if(fleetSunk(state.enemy.ships)) return end('You win! Enemy fleet destroyed.');
           state.turn='cpu'; updateHud(); drawBoards();
-          setTimeout(cpuFire, 650);
+          later(cpuFire, 650);
         }, 3000);
         updateHud(); drawBoards();
         return;
@@ -429,7 +448,7 @@ window.addEventListener('DOMContentLoaded', () => {
       if(fleetSunk(state.enemy.ships)) return end('You win! Enemy fleet destroyed.');
 
       state.turn='cpu'; updateHud(); drawBoards();
-      setTimeout(cpuFire, 650);
+      later(cpuFire, 650);
     }
 
     function cpuFire(){
@@ -469,15 +488,6 @@ window.addEventListener('DOMContentLoaded', () => {
         }
       }
     }
-      const OFF=[-1,0,1];
-      for(const seg of ship.cells){
-        for(const dy of OFF) for(const dx of OFF){
-          const x=seg.x+dx, y=seg.y+dy; if(dx===0&&dy===0) continue; if(!inBounds(x,y)) continue;
-          const cell=side.board[y][x];
-          if(cell.shipId===null){ cell.fired=true; cell.blocked=true; cell.permBlock=true; }
-        }
-      }
-    }
 
     function fleetSunk(ships){
       return ships.every(s=>s.cells.length && s.cells.every(seg=>seg.hit));
@@ -507,16 +517,6 @@ window.addEventListener('DOMContentLoaded', () => {
       return true;
     }
 
-    function canShiftShip(side, ship, dx, dy){
-      for(const seg of ship.cells){
-        const nx = seg.x + dx, ny = seg.y + dy;
-        if(!inBounds(nx,ny)) return false;
-        const cell = side.board[ny][nx];
-        if(cell.permBlock) return false;
-        if(cell.shipId !== null && cell.shipId !== ship.id) return false;
-      }
-      return true;
-    }
     function moveFleet(side){
       const DIRS=[[1,0],[-1,0],[0,1],[0,-1]];
       for(const ship of side.ships){
@@ -534,7 +534,7 @@ window.addEventListener('DOMContentLoaded', () => {
           for(const seg of ship.cells){
             const cell=side.board[seg.y][seg.x];
             cell.shipId=ship.id; cell.idx=seg.idx;
-            if(cell.hit) seg.hit = true; // if board already marked (e.g., repeated move), mirror to model
+            if(cell.hit) seg.hit = true; // mirror board to model
             if(seg.hit){ cell.hit=true; cell.fired=true; cell.sunk=false; }
           }
           moved=true; break;
@@ -569,17 +569,17 @@ window.addEventListener('DOMContentLoaded', () => {
       if(grids){
         grids.classList.add('storm-glow');
         if(stormToast) stormToast.classList.remove('hidden');
-        setTimeout(()=>{ grids.classList.remove('storm-glow'); }, 2000);
+        later(()=>{ grids.classList.remove('storm-glow'); }, 2000);
       }
       if(isFirst){
-        if(stormBadge){ stormBadge.classList.add('flash'); setTimeout(()=>stormBadge.classList.remove('flash'), 2000); }
+        if(stormBadge){ stormBadge.classList.add('flash'); later(()=>stormBadge.classList.remove('flash'), 2000); }
         if(elStatus){
           elStatus.style.color = '#73d7ff';
-          setTimeout(()=>{ elStatus.style.color = ''; }, 2000);
+          later(()=>{ elStatus.style.color = ''; }, 2000);
         }
       }
       // Hide toast after total storm sequence ends (2s glow + 1s delay)
-      setTimeout(()=>{ if(stormToast) stormToast.classList.add('hidden'); }, 3000);
+      later(()=>{ if(stormToast) stormToast.classList.add('hidden'); }, 3000);
     }
 
     function msg(t){ elStatus.textContent=t; }
@@ -605,20 +605,19 @@ window.addEventListener('DOMContentLoaded', () => {
       results.push(['can place at 0,0 len 5 horiz', canPlaceAt(0,0,5,'h', state.player.board)]);
       // storm visuals callable
       triggerStormVisuals(false); results.push(['triggerStormVisuals callable', true]);
-      // movement integrity tests (mini side)
+      // movement/sinking integrity tests
       const mini = {board: makeEmptyBoard(), ships:[{id:0,len:4,cells:[{x:0,y:0,hit:false,idx:0},{x:1,y:0,hit:false,idx:1},{x:2,y:0,hit:false,idx:2},{x:3,y:0,hit:false,idx:3}]}]};
-      // stamp mini ship
       for(const s of mini.ships[0].cells){ mini.board[s.y][s.x].shipId=0; mini.board[s.y][s.x].idx=s.idx; }
       results.push(['reject OOB (left)', !canShiftShip(mini, mini.ships[0], -1, 0)]);
       results.push(['allow right inside bounds', canShiftShip(mini, mini.ships[0], 1, 0)]);
-      // collision test
       mini.board[0][4].shipId = 99; results.push(['reject collision with other ship', !canShiftShip(mini, mini.ships[0], 1, 0)]);
-      // extra: placement edge invalid
       results.push(['reject placement off-board', !canPlaceAt(8,9,5,'h', state.player.board)]);
-      // extra: permBlock prevents movement
-      mini.board[0][0].shipId=0; mini.board[0][1].shipId=0; mini.board[0][2].shipId=0; mini.board[0][3].shipId=0;
-      mini.board[0][4].shipId=null; mini.board[0][4].permBlock=true;
-      results.push(['reject move into permBlock', !canShiftShip(mini, mini.ships[0], 1, 0)]);
+      mini.board[0][4].shipId=null; mini.board[0][4].permBlock=true; results.push(['reject move into permBlock', !canShiftShip(mini, mini.ships[0], 1, 0)]);
+      // sink check using board truth
+      const side = {board: makeEmptyBoard(), ships:[{id:1,len:3,cells:[{x:1,y:1,hit:false,idx:0},{x:2,y:1,hit:false,idx:1},{x:3,y:1,hit:false,idx:2}]}]};
+      for(const seg of side.ships[0].cells){ side.board[seg.y][seg.x].shipId=1; side.board[seg.y][seg.x].idx=seg.idx; }
+      side.board[1][1].hit=side.board[1][2].hit=side.board[1][3].hit=true;
+      results.push(['isShipSunk detects true', isShipSunk(side, side.ships[0])]);
 
       console.table(results.map(([k,v])=>({test:k, pass:!!v})));
     }
@@ -631,4 +630,5 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
 
